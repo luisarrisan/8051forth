@@ -14,6 +14,7 @@ The changes to this project are:
 3. a software emulator based on emu8051, included in this project
 4. regression test using the ANS test suite, CI by Travis
 5. a version tuned for the TI CC1110 SoCs
+6. another version adapted for TI CC2541 SoC (HM-10 bluetooth module)
 
 To rebuild:
 
