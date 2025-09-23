@@ -140,27 +140,45 @@
        .equ P1SEL,    0xF4
        .equ P0DIR,    0xFD
        .equ P1DIR,    0xFE
+       .equ P1INP,    0xF6 ; Port 1 Input Mode       
+       .equ P2INP,    0xF7 ; Port 2 Input Mode       
        .equ U1CSR,    0xF8 ; USART 1 Control and Status
        .equ U1UCR,    0xFB ; USART 1 UART Control
        .equ U1GCR,    0xFC ; USART 1 Generic Control
        .equ U1DBUF,   0xF9 ; USART 1 Receive- and Transmit-Data Buffer
        .equ U1BAUD,   0xFA ; USART 1 Baud-Rate Control
+       .equ IRCON2,   0xE8 ; Interrupt Flags 5
+
 reset:	   
         mov MEMCTR,#0b00001000    ; Map RAM into code memory starting at address 0x8000
         mov CLKCONCMD,#0b10001000 ; Set System clock to external 32Mhz xtal		
-        mov PERCFG,#0b00000010 ; USART1 Alternative 2 location pins P1.6-7
+
+
+        ;This setup for UART1 allows fast and error-free communications with Tera Term 
+        ;  at 115.200 baud, 8N2, RTS/CTS flow control, no transmit delays needed.
+        ;We don't enable hardware flow control. The RTS at P1.5 is set and reset manually in code
+        ;Connect RTS(P1.5) to CTS pin in FT232 adapter.
+        
+        mov PERCFG,#0b00000010 ; USART1 Alternative 2 location pins P1.4-7
         mov P1SEL,#0b11000000  ; Select P1.6-7 as peripheral pins for USART1
+        ;mov P1SEL,#0b11110000  ; Select P1.4-7 as peripheral pins for USART1
         mov U1BAUD,#216        ; UART1 -> 115.200 Baud @32Mhz
         mov U1GCR,#11          ; UART1 -> 115.200 Baud @32Mhz
+        ;mov U1BAUD,#59         ; UART1 -> 9.600 Baud @32Mhz
+        ;mov U1GCR,#8           ; UART1 -> 9.600 Baud @32Mhz
         ;mov U1BAUD,#59         ; UART1 -> 2.400 Baud @32Mhz
-        ;mov U1GCR,#6           ; UART1 -> 2.400 Baud @32Mhz
-        mov U1UCR,#0b10000010  ; Disable Flow control, Flush, High stop, Low Start
+        ;mov U1GCR,#6           ; UART1 -> 2.400 Baud @32Mhz       
+        mov U1UCR,#0b10000010  ; Disable Flow control, Flush, 1 stop bit, High stop, Low Start
+        ;mov U1UCR,#0b11000010  ; Enable Flow control, Flush, 1 stop bit, High stop, Low Start
         mov U1CSR,#0b11000000  ; USART1 -> UART MODE Enable
         ;setb U1CSR.1		
         mov P0DIR,#0b00011100  ; P0.3 as output (LED)
 		setb P0.3              ; P0.3 High
         clr P0.3              ; P0.3 Low
-
+        ;mov P2INP,#0b01000000  ; Set P1 pins configured as pulldown
+        mov P1DIR,#0b00100000  ; P1.5 as output (RTS)
+        setb P1.5              ; P1.5 High (RTS) do not allow serial input
+        
         mov UP,#UPHI
 		mov MPAGE,UP       ; user area at FE00,
         mov r0,#0xff    ; param stack at FF (DATA) ----FEFF
@@ -173,10 +191,11 @@ reset:
         .set link,*+1
         .db  0,4,"EMIT"
 EMIT:
-        clr U1CSR.1        ; Clear TX_BYTE
-        mov U1DBUF,dpl     ; output TOS char to UART
-        jnb U1CSR.1,*      ; wait for TX_BYTE -> last byte transmitted
-        clr U1CSR.1        ; Clear TX_BYTE
+        clr IRCON2.2
+        mov U1DBUF,dpl  ; output TOS char to UART
+        jnb IRCON2.2,*
+        clr IRCON2.2
+
         ajmp poptos        ; pop new TOS		
 
 ;C KEY      -- c      get character from keyboard
@@ -184,10 +203,13 @@ EMIT:
         .set link,*+1
         .db  0,3,"KEY"
 KEY:
-		jnb U1CSR.2,KEY       ; Wait for byte
+        clr P1.5           ; P1.5 Low (RTS) allow serial input
+KEY_W:  mov a,U1CSR
+        jnb acc.2,KEY_W    ; Wait for byte
+        setb P1.5          ; P1.5 High (RTS) do not allow serial input
         acall   DUP
-		mov dpl,U1DBUF        ; get new char in TOS
         mov dph,#0
+		mov dpl,U1DBUF     ; get new char in TOS
         ret
 
 ;X KEY?      -- f      return true if char waiting
@@ -195,11 +217,13 @@ KEY:
         .set link,*+1
         .db  0,4,"KEY?"
 QUERYKEY:
+        clr P1.5      ; P1.5 Low (RTS) allow serial input
         acall DUP     ; push old TOS
-        mov a,#0
-        jb U1CSR.2,QUERYKEY_e     ; If byte not ready increment A
-        inc a
-QUERYKEY_e:
+        setb P1.5     ; P1.5 High (RTS) do not allow serial input
+        mov a,U1CSR
+        rrc a
+        rrc a
+        rrc a
         ajmp cyprop     ; propagate that thru TOS
 
 ; INTERPRETER LOGIC =============================
@@ -1745,8 +1769,8 @@ combr1: acall LIT
         .set link,*+1
         .db  0,5,",DEST"
 COMMADEST: lcall IHERE
-        acall ONEPLUS
-        acall MINUS
+        lcall ONEPLUS
+        lcall MINUS
         ljmp ICCOMMA
 
 ;Z !DEST   dest adrs --    change a branch dest'n
@@ -2337,20 +2361,34 @@ ACCEPT: lcall OVER
         lcall ONEMINUS
         lcall OVER
 ACC1:   lcall KEY
-        lcall DUP
-        lcall LIT
-        .drw 0x0D
-        lcall NOTEQUAL
-        lcall zerosense
+
+;        lcall DUP
+;        lcall LIT
+;        .drw 0x0D
+;        lcall NOTEQUAL
+;        lcall zerosense
+;        jz ACC5
+        mov a,dpl
+        ;clr c
+        ;subb a,#0x0D
+        xrl a,#0x0D
         jz ACC5
+        
         lcall DUP
         lcall EMIT
-        lcall DUP
-        lcall LIT
-        .drw 8
-        lcall EQUAL
-        lcall zerosense
-        jz ACC3
+        
+;        lcall DUP
+;        lcall LIT
+;        .drw 8
+;        lcall EQUAL
+;        lcall zerosense
+;        jz ACC3
+        mov a,dpl
+        ;clr c
+        ;subb a,#8
+        xrl a,#8
+        jnz ACC3
+        
         lcall DROP
         lcall ONEMINUS
         lcall TOR
@@ -2358,9 +2396,19 @@ ACC1:   lcall KEY
         lcall RFROM
         acall UMAX
         sjmp ACC4
-ACC3:   lcall OVER
-        lcall CSTORE
-        lcall ONEPLUS
+        
+ACC3:   ;lcall OVER
+        ;lcall CSTORE
+        ;lcall ONEPLUS
+        mov r2,dpl
+        mov dpl,@r0     ; pop lo byte -> TOS
+        movx a,@r0      ; pop hi byte -> TOS
+        mov dph,a
+        inc r0
+        mov a,r2
+        movx @dptr,a
+        inc dptr
+        
         lcall OVER
         acall UMIN
 ACC4:   sjmp ACC1
