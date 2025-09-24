@@ -6,6 +6,7 @@
 #include <assert.h>
 
 int uart_data;
+int trace = 0;
 
 static void finish(struct em8051 *aCPU)
 {
@@ -19,7 +20,9 @@ static void finish(struct em8051 *aCPU)
 static int
 emu_sfrread(struct em8051 *aCPU, int aRegister)
 {
-  if (aRegister == 0x86) {
+  if ((aRegister == 0x86) ||      
+      ((uart_data == 0xf9) && (aRegister == 0xf8)) //cc2541.asm uses UART1 -> U1CSR.RX_BYTE
+     ) { 
     return 4;  // Pretend UART receive byte always ready
   }
   if (aRegister == uart_data) {
@@ -33,10 +36,21 @@ emu_sfrread(struct em8051 *aCPU, int aRegister)
 
 static void
 emu_sfrwrite(struct em8051 *aCPU, int aRegister)
-{
+{  
   if (aRegister == uart_data) {
+    if(trace!=0) printf("sfr_write aRegister=%02x\n", aRegister);      
     putchar(aCPU->mSFR[uart_data - 0x80]);
-    aCPU->mSFR[0xe8 - 0x80] = 2;
+    if (uart_data == 0xf9) {      
+      aCPU->mSFR[0xe8 - 0x80] = 4; //cc2541.asm uses UART1
+    } else {
+      aCPU->mSFR[0xe8 - 0x80] = 2;
+    }
+  }
+  //If writing to MPAGE copy the value to P2
+  //    so movx through @r0 works as expected in code written for the cc2541
+  if (aRegister == 0x93) {
+    if(trace!=0) printf("Writing to MPAGE!!!!!!!\n", aRegister);      
+    aCPU->mSFR[0xa0 - 0x80]=aCPU->mSFR[0x93 - 0x80];
   }
 }
 
@@ -45,11 +59,13 @@ emu_exception(struct em8051 *aCPU, int aCode)
 {
   if (aCode == EXCEPTION_ILLEGAL_OPCODE)
     finish(aCPU);
-  assert(0);
+  //assert(0);
 }
 
 int main(int argc, char *argv[])
 {
+  unsigned char* iMem;
+
   struct em8051 emu;
   memset(&emu, 0, sizeof(emu));
 
@@ -64,12 +80,28 @@ int main(int argc, char *argv[])
     // For TI CC1110:
     emu.mLowerData   = emu.mExtData + 0xff00;
     emu.mUpperData   = emu.mExtData + 0xff80;
-
-    uart_data = 0xc1;
+    uart_data        = 0xc1;
   } else if (strcmp(argv[1], "generic") == 0) {
     emu.mLowerData   = calloc(128, 1);
     emu.mUpperData   = calloc(128, 1);
-    uart_data = 0x99;
+    uart_data        = 0x99;
+  } else if (strcmp(argv[1], "cc2541") == 0) {
+    // For TI CC2541 (HM-10 module):
+    free(emu.mCodeMem);
+    iMem             = malloc(0x18000);
+    emu.mCodeMem     = iMem;
+    emu.mCodeMemSize = 0x10000;
+    memset(emu.mCodeMem, 0xff, emu.mCodeMemSize);
+    emu.mExtData     = iMem + 0x8000;
+    emu.mExtDataSize = 0x10000;
+	//iData = emu.mExtData + (8*1024) - 256;
+    emu.mLowerData   = emu.mExtData + 0x1f00;
+    emu.mUpperData   = emu.mExtData + 0x1f80;
+    //emu.mLowerData   = emu.mExtData + 0xff00;
+    //emu.mUpperData   = emu.mExtData + 0xff80;  
+    free(emu.mSFR);
+	emu.mSFR         = emu.mExtData + 0x7080;
+    uart_data        = 0xf9;
   } else {
     fprintf(stderr, "usage: emu8051 [generic|cc1110] <hexfile>\n");
     exit(1);
@@ -77,11 +109,12 @@ int main(int argc, char *argv[])
 
   emu.except       = &emu_exception;
   emu.sfrread      = &emu_sfrread;
-  emu.sfrwrite      = &emu_sfrwrite;
+  emu.sfrwrite     = &emu_sfrwrite;
   emu.xread = NULL;
   emu.xwrite = NULL;
   reset(&emu, 1);
-  memset(emu.mCodeMem, 0xff, emu.mCodeMemSize);
+  if (strcmp(argv[1], "cc2541") != 0)
+    memset(emu.mCodeMem, 0xff, emu.mCodeMemSize);  
 
     static const uint8_t df00_block[] = {
 0xD3, 0x91, 0xFF, 0x04, 0x45, 0x00, 0x00, 0x0F, 0x00, 0x1E, 0xC4, 0xEC, 0x8C, 0x22, 0x02, 0x22, 
@@ -108,13 +141,27 @@ int main(int argc, char *argv[])
     exit(1);
   }
 
-  int i;
-  int trace = 0;
+  int i, inst_bytes;
+  unsigned char disasm_buf[50];
   for (i = 0; emu.mPC != 0xffff; i++) {
     // trace |= (emu.mPC == 0xe009);
     if (trace) {
-      unsigned int tos = emu.mSFR[REG_DPH0] * 256 + emu.mSFR[REG_DPL0];
-      printf("pc=%04x tos=%04x\n", emu.mPC, tos);
+	//if (emu.mPC>0x0c00 && emu.mPC<0x0c52) {
+      unsigned int r0 = emu.mLowerData[0];
+      unsigned int p2 = emu.mSFR[REG_P2];
+      unsigned int tos = emu.mSFR[REG_DPH0] * 256 + emu.mSFR[REG_DPL0];  
+	  unsigned int tosm1h = emu.mExtData[p2 * 256 + r0];  
+	  unsigned int tosm1l = emu.mLowerData[r0];    
+	  unsigned int tosm1 = tosm1h*256 + tosm1l;  
+	  unsigned int tosm1o = emu.mExtData[p2 * 256 + r0+1] * 256 + 
+	                        emu.mExtData[p2 * 256 + r0];  
+      inst_bytes = emu.dec[emu.mCodeMem[emu.mPC]](&emu, emu.mPC, disasm_buf);
+      printf("%04x: ", emu.mPC);
+      for (int j = 0; j<inst_bytes;   j++){printf("%02x", emu.mCodeMem[emu.mPC+j]);}
+      for (int j = 0; j<3-inst_bytes; j++){printf("  ");}
+      printf("\t\t%-25s\t\t", disasm_buf);
+      printf("DS[r0]=%04x tos=%04x sp=%02x r0=%02x ACC=%02x PSW=%08b P2=%04x\n", 
+	          tosm1, tos, emu.mSFR[REG_SP], r0, emu.mSFR[REG_ACC], emu.mSFR[REG_PSW], p2);      
     }
     tick(&emu);
   }
