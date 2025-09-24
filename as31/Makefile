@@ -35,23 +35,25 @@ CC=gcc
 
 OBJ=run.o lexer.o parser.o symbol.o emitter.o
 
-all: as31 as31_gtk
+all: as31 #as31_gtk not needed
 
 as31: $(OBJ) as31.o
 	@$(CC) $(CFLAGS) -o as31 $(OBJ) as31.o
 	@chmod a+rx as31
 	@strip as31
 
-as31_gtk: $(OBJ) as31_gtk.o
-	@$(CC) $(CFLAGS) $(GTKFLAGS) -o as31_gtk $(OBJ) as31_gtk.o `pkg-config --cflags --libs gtk+-2.0`
-	@chmod a+rx as31
-	@strip as31
+#Not needed
+#as31_gtk: $(OBJ) as31_gtk.o
+#	@$(CC) $(CFLAGS) $(GTKFLAGS) -o as31_gtk $(OBJ) as31_gtk.o `pkg-config --cflags --libs gtk+-3.0`
+#	@chmod a+rx as31
+#	@strip as31
 
 parser.c parser.h: parser.y
 	@bison -d -o parser.c parser.y
 
-as31_gtk.o: as31_gtk.c as31.h
-	@$(CC) $(CFLAGS) $(GTKFLAGS) `pkg-config --cflags --libs gtk+-2.0` -c as31_gtk.c 
+#Not needed
+#as31_gtk.o: as31_gtk.c as31.h
+#	@$(CC) $(CFLAGS) $(GTKFLAGS) `pkg-config --cflags --libs gtk+-3.0` -c as31_gtk.c 
 
 as31.o: as31.c as31.h
 emitter.o: emitter.c as31.h
