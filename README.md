@@ -35,3 +35,9 @@ To run the ANS regression suite:
 Same for the CC1110 Forth:
 
     ./confirm cc1110  cc0.hex
+
+Instructions to flash the firmware on HM-10 Module:
+
+https://circuitdigest.com/microcontroller-projects/how-to-flash-the-firmware-on-cloned-hm-10-ble-module-using-arduino-uno
+
+
