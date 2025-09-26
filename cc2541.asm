@@ -110,28 +110,7 @@
     ; .equ UPHI,0xFE          ; Uarea at FE00 hex
     .equ coderam,0x08000    ; where new code goes
     .equ dataram,0x01000    ; xram starts at 0x0000 but maps to coderam 0x8000 so we skip the first 4Kb reserved for coderam
-	.equ UPHI,0x1E          ; Uarea at FE00 hex
-
-; RESET AND INTERRUPT VECTORS ===================
-        ajmp reset
-;         ajmp ie0
-; ie0:    reti
-;         .skip 4
-;         ajmp clock ; ajmp tf0
-; tf0:    reti
-;         .skip 4
-;         ajmp ie1
-; ie1:    reti
-;         .skip 4
-;         ajmp tf1
-; tf1:    reti
-;         .skip 4
-;         ajmp riti
-; riti:   reti
-;         .skip 4
-;         ajmp tf2
-; tf2:    reti
-; 
+    .equ UPHI,0x1E          ; Uarea at FE00 hex
 
        .equ CLKCONCMD,0xC6 ; Clock Control Command
 	   .equ MPAGE,    0x93 ; XDATA Memory Access page
@@ -148,6 +127,22 @@
        .equ U1DBUF,   0xF9 ; USART 1 Receive- and Transmit-Data Buffer
        .equ U1BAUD,   0xFA ; USART 1 Baud-Rate Control
        .equ IRCON2,   0xE8 ; Interrupt Flags 5
+       .equ IEN2,     0x9A ; Interrupt enable2
+
+; RESET AND INTERRUPT VECTORS ===================
+        ajmp reset
+
+        .org 0x0073             ; 14    UTX1
+        ajmp UTX1
+
+UTX1:   ; Clear UTX1IF and disable UTX1 interrupt until next EMIT
+        clr IRCON2.2            ; UTX1IF = 0
+        push ACC                ; Preserve accumulator
+        mov a,IEN2              ; IEN2 &= ~0x08;
+        clr acc.3               ; IEN2 &= ~0x08;
+        mov IEN2,a              ; Disable UTX1 interrupt
+        pop ACC                 ; Restore original accumulator
+        reti
 
 reset:	   
         mov MEMCTR,#0b00001000    ; Map RAM into code memory starting at address 0x8000
@@ -171,7 +166,14 @@ reset:
         mov U1UCR,#0b10000010  ; Disable Flow control, Flush, 1 stop bit, High stop, Low Start
         ;mov U1UCR,#0b11000010  ; Enable Flow control, Flush, 1 stop bit, High stop, Low Start
         mov U1CSR,#0b11000000  ; USART1 -> UART MODE Enable
-        ;setb U1CSR.1		
+        ;setb U1CSR.1
+        
+        ; Initialize UART1 TX interrupt registers
+        mov a,IEN2              ; IEN2 &= ~0x08;
+        clr acc.3               ; IEN2 &= ~0x08;
+        mov IEN2,a              ; Disable UTX1 interrupt
+        clr IRCON2.2            ; Clear UTX1 interrupt flag (UTX1IF = 0)
+
         mov P0DIR,#0b00011100  ; P0.3 as output (LED)
 		setb P0.3              ; P0.3 High
         clr P0.3              ; P0.3 Low
@@ -191,12 +193,17 @@ reset:
         .set link,*+1
         .db  0,4,"EMIT"
 EMIT:
-        clr IRCON2.2
-        mov U1DBUF,dpl  ; output TOS char to UART
-        jnb IRCON2.2,*
-        clr IRCON2.2
+        ;clr IRCON2.2
+        ;mov U1DBUF,dpl  ; output TOS char to UART
+        ;jnb IRCON2.2,*
+        ;clr IRCON2.2
 
-        ajmp poptos        ; pop new TOS		
+        jb IRCON2.2,*           ; Wait for the last char to be sent (UTX1IF=0)
+        mov a,IEN2              ; Enable UTX1 interrupt again
+        setb acc.3              ; IEN2 |= 0x08;
+        mov IEN2,a              ; IEN2 |= 0x08;
+        mov U1DBUF,dpl          ; output TOS char to UART
+        ajmp poptos             ; pop new TOS		
 
 ;C KEY      -- c      get character from keyboard
         .drw link
