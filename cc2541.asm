@@ -139,19 +139,15 @@
 
 UTX1:   ; Clear UTX1IF and disable UTX1 interrupt until next EMIT
         clr IRCON2.2            ; UTX1IF = 0
-        push ACC                ; Preserve accumulator
-        mov a,IEN2              ; IEN2 &= ~0x08;
-        clr acc.3               ; IEN2 &= ~0x08;
-        mov IEN2,a              ; Disable UTX1 interrupt
-        pop ACC                 ; Restore original accumulator
+        anl IEN2,#0xF7          ; Disable UTX1 interrupt (IEN2 &= ~0x08;)
         reti
 
 reset:	
         ; Disable all enabled interrupts
-        mov IEN0, #0
-        mov IEN1, #0
-        mov IEN2, #0
-        setb IEN0.7,#0            ; Allow interrupts to be enabled
+        mov IEN0,#0
+        mov IEN1,#0
+        mov IEN2,#0
+        mov IEN0,#0x80            ; Allow interrupts to be enabled
         
         mov MEMCTR,#0b00001000    ; Map RAM into code memory starting at address 0x8000
         mov CLKCONCMD,#0b10001000 ; Set System clock to external 32Mhz xtal		
@@ -200,16 +196,9 @@ reset:
         .drw link
         .set link,*+1
         .db  0,4,"EMIT"
-EMIT:
-        ;clr IRCON2.2
-        ;mov U1DBUF,dpl  ; output TOS char to UART
-        ;jnb IRCON2.2,*
-        ;clr IRCON2.2
-
-        jb IRCON2.2,*           ; Wait for the last char to be sent (UTX1IF=0)
-        mov a,IEN2              ; Enable UTX1 interrupt again
-        setb acc.3              ; IEN2 |= 0x08;
-        mov IEN2,a              ; IEN2 |= 0x08;
+EMIT:   mov a,IEN2              ; Wait for UTX1 Interrupt to be disabled (byte sent)
+        jb acc.3,EMIT
+        orl IEN2,#0x08          ; Re-enable UTX1 interrupt (IEN2 |= 0x08;)
         mov U1DBUF,dpl          ; output TOS char to UART
         ajmp poptos             ; pop new TOS		
 
@@ -1669,7 +1658,7 @@ CHARS:  ret
 TOBODY: inc dptr
         inc dptr
         inc dptr
-        ajmp IFETCH
+        ljmp IFETCH
 
 ; Note that I@ and I! use lo,hi byte order (same
 ; as 8086 and Z80), but the 8051 acall and ajmp
@@ -1685,10 +1674,10 @@ TOBODY: inc dptr
         .drw link
         .set link,*+1
         .db  0,8,"COMPILE,"
-COMMAXT: acall LIT
+COMMAXT: lcall LIT
         .drw 0x12
         lcall ICCOMMA
-        acall SWAPBYTES
+        lcall SWAPBYTES
         ljmp ICOMMA
 
 ;Z !CF    adrs cfa --   set code action of a word
@@ -1699,15 +1688,15 @@ COMMAXT: acall LIT
         .drw link
         .set link,*+1
         .db  0,3,"!CF"
-STORECF: acall LIT
+STORECF: lcall LIT
         .drw 0x12
-        acall OVER
-        acall ICSTORE
-        acall ONEPLUS
-        acall SWOP
-        acall SWAPBYTES
-        acall SWOP
-        ajmp ISTORE
+        lcall OVER
+        lcall ICSTORE
+        lcall ONEPLUS
+        lcall SWOP
+        lcall SWAPBYTES
+        lcall SWOP
+        ljmp ISTORE
 
 ;Z ,CF    adrs --             append a code field
 ;   012 IC, >< I, ;          8051 Harvard VERSION
@@ -1724,7 +1713,7 @@ COMMACF: sjmp COMMAXT
         .drw link
         .set link,*+1
         .db  0,6,"!COLON"
-STORCOLON: acall LIT
+STORCOLON: lcall LIT
         .drw -5
         ljmp IALLOT
 
@@ -1741,7 +1730,7 @@ STORCOLON: acall LIT
         .drw link
         .set link,*+1
         .db  0,5,",EXIT"
-CEXIT:  acall LIT
+CEXIT:  lcall LIT
         .drw 0x22
         ljmp ICCOMMA
 
@@ -1760,14 +1749,14 @@ CEXIT:  acall LIT
         .drw link
         .set link,*+1
         .db  0,7,",BRANCH"
-COMMABRANCH: acall QDUP
-        acall zerosense
+COMMABRANCH: lcall QDUP
+        lcall zerosense
         jz combr1
         acall COMMAXT   ; acall sense-routine
-        acall LIT
+        lcall LIT
         .drw 0x60       ; jz opcode
         ljmp ICCOMMA
-combr1: acall LIT
+combr1: lcall LIT
         .drw 0x80       ; sjmp opcode
         ljmp ICCOMMA
 
@@ -2594,7 +2583,7 @@ ITYP5:  ret
         .drw link
         .set link,*+1
         .db 0,5,"IWORD"
-IWORD:  acall XWORD
+IWORD:  lcall XWORD
         acall IHERE
         lcall TUCK
         lcall OVER
@@ -2904,7 +2893,7 @@ SLASHSTRING: lcall ROT
         .drw link
         .set link,*+1
         .db 0,8,">COUNTED"
-TOCOUNTED: acall TWODUP
+TOCOUNTED: lcall TWODUP
         lcall CSTORE
         lcall CHARPLUS
         lcall SWOP
@@ -2927,10 +2916,10 @@ TOCOUNTED: acall TWODUP
         .set link,*+1
         .db 0,4,"WORD"
 XWORD:  lcall DUP
-        acall SOURCE
-        acall TOIN
+        lcall SOURCE
+        lcall TOIN
         lcall FETCH
-        acall SLASHSTRING ;X /STRING  a u n -- a+n u-n          trim string
+        lcall SLASHSTRING ;X /STRING  a u n -- a+n u-n          trim string
         lcall DUP
         lcall TOR
         lcall ROT
@@ -2947,16 +2936,16 @@ WORD1:  lcall RFROM
         lcall RFROM
         lcall ROT
         lcall MINUS
-        acall TOIN
+        lcall TOIN
         lcall PLUSSTORE
         lcall TUCK
         lcall MINUS
-        acall HERE
-        acall TOCOUNTED
-        acall HERE
+        lcall HERE
+        lcall TOCOUNTED
+        lcall HERE
         lcall BL
         lcall OVER
-        acall COUNT
+        lcall COUNT
         lcall PLUS
         ljmp CSTORE
 
@@ -2981,7 +2970,7 @@ NFATOLFA: lcall LIT
         .drw link
         .set link,*+1
         .db 0,7,"NFA>CFA"
-NFATOCFA: acall ICOUNT
+NFATOCFA: lcall ICOUNT
         lcall LIT
         .drw 0x07F
         lcall AND
@@ -3990,17 +3979,17 @@ numeric: add a,#0x3a
         ret
 
 DOTHH:  lcall DUP
-        acall HI
-        acall DOTHEX
-        acall LO
-        acall DOTHEX
+        lcall HI
+        lcall DOTHEX
+        lcall LO
+        lcall DOTHEX
         ret
 ;
 ;       : .B ( a - a+1)  DUP C@ .HH 20 EMIT 1+ ;
 ;
 DOTB:   lcall DUP
         lcall CFETCH
-        acall DOTHH
+        lcall DOTHH
         lcall lit
         .drw 0x20
         lcall EMIT
@@ -4010,9 +3999,9 @@ DOTB:   lcall DUP
 ;       : .A ( a)  DUP SWAB .HH .HH 20 EMIT ;
 ;
 DOTA:   lcall DUP
-        acall SWAB
-        acall DOTHH
-        acall DOTHH
+        lcall SWAB
+        lcall DOTHH
+        lcall DOTHH
         lcall lit
         .drw 0x20
         lcall EMIT
