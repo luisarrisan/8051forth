@@ -127,13 +127,15 @@
        .equ U1DBUF,   0xF9 ; USART 1 Receive- and Transmit-Data Buffer
        .equ U1BAUD,   0xFA ; USART 1 Baud-Rate Control
        .equ IRCON2,   0xE8 ; Interrupt Flags 5
+       .equ IEN0,     0xA8 ; Interrupt enable0
+       .equ IEN1,     0xB8 ; Interrupt enable1
        .equ IEN2,     0x9A ; Interrupt enable2
 
 ; RESET AND INTERRUPT VECTORS ===================
-        ajmp reset
+        ljmp reset
 
         .org 0x0073             ; 14    UTX1
-        ajmp UTX1
+        ljmp UTX1
 
 UTX1:   ; Clear UTX1IF and disable UTX1 interrupt until next EMIT
         clr IRCON2.2            ; UTX1IF = 0
@@ -144,7 +146,13 @@ UTX1:   ; Clear UTX1IF and disable UTX1 interrupt until next EMIT
         pop ACC                 ; Restore original accumulator
         reti
 
-reset:	   
+reset:	
+        ; Disable all enabled interrupts
+        mov IEN0, #0
+        mov IEN1, #0
+        mov IEN2, #0
+        setb IEN0.7,#0            ; Allow interrupts to be enabled
+        
         mov MEMCTR,#0b00001000    ; Map RAM into code memory starting at address 0x8000
         mov CLKCONCMD,#0b10001000 ; Set System clock to external 32Mhz xtal		
 
@@ -172,7 +180,7 @@ reset:
         mov a,IEN2              ; IEN2 &= ~0x08;
         clr acc.3               ; IEN2 &= ~0x08;
         mov IEN2,a              ; Disable UTX1 interrupt
-        clr IRCON2.2            ; Clear UTX1 interrupt flag (UTX1IF = 0)
+        clr IRCON2.2            ; Clear UTX1 interrupt flag (UTX1IF = 0)        
 
         mov P0DIR,#0b00011100  ; P0.3 as output (LED)
 		setb P0.3              ; P0.3 High
